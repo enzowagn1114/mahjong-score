@@ -1,1 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>過年麻將記帳系統 🧧</title>
+    <style>
+        :root { --red: #C41E3A; --gold: #FFD700; --white: #FFF; --gray: #F4F4F4; }
+        body { font-family: -apple-system, "Microsoft JhengHei", sans-serif; background: var(--gray); margin: 0; padding-bottom: 50px; }
+        header { background: var(--red); color: var(--gold); text-align: center; padding: 15px; font-size: 24px; font-weight: bold; border-bottom: 3px solid var(--gold); }
+        
+        .card { background: var(--white); margin: 10px; padding: 15px; border-radius: 12px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        h3 { margin-top: 0; color: var(--red); border-left: 5px solid var(--red); padding-left: 10px; }
+
+        /* 設定區 */
+        .setting-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        input { width: 90%; padding: 10px; border: 1px solid #ccc; border-radius: 5px; font-size: 16px; }
+
+        /* 即時戰況 */
+        .score-board { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; text-align: center; }
+        .score-item { padding: 10px 5px; border-radius: 8px; background: #f9f9f9; }
+        .player-name { font-weight: bold; font-size: 14px; margin-bottom: 5px; }
+        .score-val { font-size: 18px; font-weight: bold; }
+        .plus { color: #28a745; } .minus { color: var(--red); }
+
+        /* 操作區 */
+        .btn-group { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; }
+        .btn { padding: 12px 5px; border: 2px solid #ddd; border-radius: 8px; background: white; cursor: pointer; font-size: 14px; font-weight: bold; }
+        .btn.active { background: var(--red); color: var(--gold); border-color: var(--gold); }
+        .action-btn { background: var(--gold); color: var(--red); border: none; padding: 15px; width: 100%; font-size: 18px; font-weight: bold; border-radius: 10px; margin-top: 15px; cursor: pointer; box-shadow: 0 4px 0 #b8860b; }
+        .action-btn:active { transform: translateY(2px); box-shadow: 0 2px 0 #b8860b; }
+
+        /* 歷史紀錄 */
+        .log-list { max-height: 200px; overflow-y: auto; font-size: 13px; }
+        .log-item { border-bottom: 1px dashed #ccc; padding: 8px 0; display: flex; justify-content: space-between; align-items: center; }
+        .undo-btn { background: #666; color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 11px; }
+    </style>
+</head>
+<body>
+
+<header>🧧 吉祥如意算錢寶</header>
+
+<div class="card">
+    <div class="setting-grid">
+        <div>底：<input type="number" id="baseMoney" value="100"></div>
+        <div>台：<input type="number" id="fanMoney" value="20"></div>
+    </div>
+</div>
+
+<div class="card">
+    <h3>目前戰況</h3>
+    <div class="score-board" id="scoreBoard">
+        </div>
+</div>
+
+<div class="card">
+    <h3>本局設定</h3>
+    
+    <p>1. 莊家是誰？ (連莊：<span id="dealerComboDisplay">0</span>)</p>
+    <div class="btn-group" id="dealerBtns"></div>
+    <div style="margin-top: 10px;">
+        <button class="btn" onclick="updateCombo(-1)">連莊 -1</button>
+        <button class="btn" onclick="updateCombo(1)">連莊 +1</button>
+    </div>
+
+    <p>2. 贏家是誰？</p>
+    <div class="btn-group" id="winnerBtns"></div>
+
+    <p>3. 贏牌方式？</p>
+    <div class="btn-group">
+        <button class="btn" id="typeSelf" onclick="setType('self')">自摸</button>
+        <button class="btn" id="typeShoot" onclick="setType('shoot')">放槍</button>
+    </div>
+
+    <div id="loserSection" style="display:none;">
+        <p>4. 誰放槍？</p>
+        <div class="btn-group" id="loserBtns"></div>
+    </div>
+
+    <p>5. 台數 (不含莊家/連莊)：</p>
+    <input type="number" id="fansInput" value="0" style="width: 60%; font-size: 20px;">
+    
+    <button class="action-btn" onclick="submitRecord()">確認結算</button>
+</div>
+
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h3>歷史紀錄</h3>
+        <button class="undo-btn" onclick="undoLast()">刪除上一筆</button>
+    </div>
+    <div class="log-list" id="logList"></div>
+</div>
+
+<script>
+    let players = [
+        { name: "東", score: 0 }, { name: "南", score: 0 },
+        { name: "西", score: 0 }, { name: "北", score: 0 }
+    ];
+    let history = [];
+    let state = { dealerIdx: 0, combo: 0, winnerIdx: -1, loserIdx: -1, type: 'self' };
+
+    function init() {
+        renderScores();
+        renderPlayerBtns();
+        setType('self');
+    }
+
+    function renderScores() {
+        const board = document.getElementById('scoreBoard');
+        board.innerHTML = players.map(p => `
+            <div class="score-item">
+                <div class="player-name">${p.name}</div>
+                <div class="score-val ${p.score >= 0 ? 'plus' : 'minus'}">${p.score}</div>
+            </div>
+        `).join('');
+    }
+
+    function renderPlayerBtns() {
+        const dDiv = document.getElementById('dealerBtns');
+        const wDiv = document.getElementById('winnerBtns');
+        const lDiv = document.getElementById('loserBtns');
+        
+        let html = players.map((p, i) => `
+            <button class="btn" id="d-${i}" onclick="setDealer(${i})">${p.name}</button>
+        `).join('');
+        dDiv.innerHTML = html;
+        
+        html = players.map((p, i) => `
+            <button class="btn" id="w-${i}" onclick="setWinner(${i})">${p.name}</button>
+        `).join('');
+        wDiv.innerHTML = html;
+
+        html = players.map((p, i) => `
+            <button class="btn" id="l-${i}" onclick="setLoser(${i})">${p.name}</button>
+        `).join('');
+        lDiv.innerHTML = html;
+        
+        updateBtnHighlight();
+    }
+
+    function updateBtnHighlight() {
+        players.forEach((_, i) => {
+            document.getElementById(`d-${i}`).className = (state.dealerIdx === i) ? 'btn active' : 'btn';
+            document.getElementById(`w-${i}`).className = (state.winnerIdx === i) ? 'btn active' : 'btn';
+            document.getElementById(`l-${i}`).className = (state.loserIdx === i) ? 'btn active' : 'btn';
+        });
+    }
+
+    function setDealer(i) { state.dealerIdx = i; updateBtnHighlight(); }
+    function setWinner(i) { state.winnerIdx = i; updateBtnHighlight(); }
+    function setLoser(i) { state.loserIdx = i; updateBtnHighlight(); }
+    function setType(t) { 
+        state.type = t; 
+        document.getElementById('typeSelf').className = (t==='self')?'btn active':'btn';
+        document.getElementById('typeShoot').className = (t==='shoot')?'btn active':'btn';
+        document.getElementById('loserSection').style.display = (t==='shoot')?'block':'none';
+    }
+    function updateCombo(v) { 
+        state.combo = Math.max(0, state.combo + v); 
+        document.getElementById('dealerComboDisplay').innerText = state.combo;
+    }
+
+    function submitRecord() {
+        if (state.winnerIdx === -1) return alert("請選擇贏家");
+        if (state.type === 'shoot' && state.loserIdx === -1) return alert("請選擇誰放槍");
+        if (state.type === 'shoot' && state.winnerIdx === state.loserIdx) return alert("贏家不能跟放槍同一人");
+
+        const base = parseInt(document.getElementById('baseMoney').value);
+        const point = parseInt(document.getElementById('fanMoney').value);
+        const fans = parseInt(document.getElementById('fansInput').value);
+        const dealerFans = (state.combo * 2) + 1;
+
+        let record = { scores: [0, 0, 0, 0], desc: "" };
+        let baseWin = base + (fans * point);
+
+        if (state.type === 'self') {
+            players.forEach((_, i) => {
+                if (i === state.winnerIdx) return;
+                let pay = baseWin;
+                if (i === state.dealerIdx || state.winnerIdx === state.dealerIdx) {
+                    pay += (dealerFans * point);
+                }
+                record.scores[i] -= pay;
+                record.scores[state.winnerIdx] += pay;
+            });
+            record.desc = `${players[state.winnerIdx].name}自摸 ${fans}台`;
+        } else {
+            let pay = baseWin;
+            if (state.loserIdx === state.dealerIdx || state.winnerIdx === state.dealerIdx) {
+                pay += (dealerFans * point);
+            }
+            record.scores[state.loserIdx] -= pay;
+            record.scores[state.winnerIdx] += pay;
+            record.desc = `${players[state.winnerIdx].name}胡 ${players[state.loserIdx].name} ${fans}台`;
+        }
+
+        applyRecord(record);
+    }
+
+    function applyRecord(record) {
+        record.scores.forEach((s, i) => players[i].score += s);
+        history.push(record);
+        renderScores();
+        renderLog();
+        // 重置贏家台數，保留莊家
+        state.winnerIdx = -1; state.loserIdx = -1;
+        document.getElementById('fansInput').value = 0;
+        updateBtnHighlight();
+    }
+
+    function renderLog() {
+        const list = document.getElementById('logList');
+        list.innerHTML = history.slice().reverse().map((r, i) => `
+            <div class="log-item">
+                <span>${r.desc}</span>
+            </div>
+        `).join('');
+    }
+
+    function undoLast() {
+        if (history.length === 0) return;
+        let last = history.pop();
+        last.scores.forEach((s, i) => players[i].score -= s);
+        renderScores();
+        renderLog();
+    }
+
+    init();
+</script>
+
+</body>
+</html>
 
